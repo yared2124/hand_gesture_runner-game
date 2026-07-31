@@ -1,106 +1,67 @@
 import cv2
-import mediapipe as mp
 import numpy as np
-import time
-from typing import Tuple, Optional
-import config
+import mediapipe as mp
 
 class HandTracker:
     def __init__(self):
-        self.cap = cv2.VideoCapture(config.CAMERA_INDEX)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+        # Check if legacy solutions exists (Python <=3.12)
+        if hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands'):
+            self.mp_hands = mp.solutions.hands
+            self.mp_drawing = mp.solutions.drawing_utils
+            self.hands = self.mp_hands.Hands(
+                static_image_mode=False,
+                max_num_hands=1,
+                min_detection_confidence=0.6,
+                min_tracking_confidence=0.6
+            )
+            self.mode = "legacy"
+        else:
+            # Python 3.13+ Fallback: Use OpenCV Contour Tracking
+            self.mode = "contour"
 
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Error: Camera index {config.CAMERA_INDEX} could not be opened.")
-
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=1,
-            min_detection_confidence=config.MIN_DETECTION_CONFIDENCE,
-            min_tracking_confidence=config.MIN_TRACKING_CONFIDENCE
-        )
-
-        self.last_jump_time = 0.0
-        self.last_slide_time = 0.0
-        self.smoothed_x: Optional[float] = None
-        self.last_valid_timestamp = time.time()
-
-    def process_frame(self) -> Tuple[int, float, Optional[np.ndarray]]:
-        """
-        Processes a single frame from the webcam.
-        Returns:
-            gesture_code: 0 = RUNNING/IDLE, 1 = JUMP, 2 = SLIDE
-            normalized_x: Horizontal coordinate in range [0.0, 1.0]
-            debug_frame: OpenCV BGR frame rendered with landmark annotations
-        """
-        success, frame = self.cap.read()
-        if not success:
-            return 0, 0.5, None
-
-        # FR-CAP-03: Horizontal Flip for natural mirroring
+    def process_frame(self, frame):
         frame = cv2.flip(frame, 1)
         h, w, _ = frame.shape
+        gesture_code = 0  # 0: RUNNING, 1: JUMP, 2: SLIDE
+        normalized_x = 0.5
 
-        # Convert to RGB for MediaPipe processing
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(rgb_frame)
+        if self.mode == "legacy":
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.hands.process(rgb_frame)
 
-        gesture_code = 0  # Default to RUNNING
-        raw_x = 0.5
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    self.mp_drawing.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+                    
+                    wrist_x = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST].x
+                    normalized_x = wrist_x
 
-        if results.multi_hand_landmarks:
-            self.last_valid_timestamp = time.time()
-            hand_landmarks = results.multi_hand_landmarks[0]
+                    index_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_TIP].y
+                    index_pip = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_PIP].y
+                    
+                    if index_tip < index_pip:
+                        gesture_code = 1  # JUMP
+                    elif index_tip > index_pip:
+                        gesture_code = 2  # SLIDE
 
-            # Convert normalized MediaPipe coordinates into pixel coordinates
-            lm_list = [[int(lm.x * w), int(lm.y * h)] for lm in hand_landmarks.landmark]
+        elif self.mode == "contour":
+            # Direct tracking using hand bounding box on Python 3.13
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+            upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+            mask = cv2.inRange(hsv, lower_skin, upper_skin)
 
-            # FR-LM-03: Wrist position (Landmark 0) used for continuous lateral control
-            raw_x = lm_list[0][0] / float(w)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                largest = max(contours, key=cv2.contourArea)
+                if cv2.contourArea(largest) > 2500:
+                    x, y, bw, bh = cv2.boundingRect(largest)
+                    cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
+                    normalized_x = (x + bw / 2) / w
 
-            # FR-GS-02: Exponential Moving Average (EMA) to eliminate hand jitter
-            if self.smoothed_x is None:
-                self.smoothed_x = raw_x
-            else:
-                self.smoothed_x = (config.SMOOTHING_ALPHA * raw_x) + ((1.0 - config.SMOOTHING_ALPHA) * self.smoothed_x)
+                    if y < h * 0.35:
+                        gesture_code = 1  # High position -> JUMP
+                    elif y + bh > h * 0.75:
+                        gesture_code = 2  # Low position -> SLIDE
 
-            # --- FR-LM-01 & FR-GS: Gesture Classification ---
-            tip_ids = [8, 12, 16, 20]   # Index, Middle, Ring, Pinky Tips
-            pip_ids = [6, 10, 14, 18]   # Corresponding PIP joints
-
-            # Determine finger extension state (True = extended, False = curled)
-            extended_states = [lm_list[tip][1] < lm_list[pip][1] for tip, pip in zip(tip_ids, pip_ids)]
-
-            now = time.time() * 1000.0  # Convert to milliseconds
-
-            # Open Palm Detection (JUMP)
-            if all(extended_states):
-                if (now - self.last_jump_time) > config.GESTURE_DEBOUNCE_MS:
-                    gesture_code = 1
-                    self.last_jump_time = now
-
-            # Fist Detection (SLIDE)
-            elif not any(extended_states):
-                if (now - self.last_slide_time) > config.GESTURE_DEBOUNCE_MS:
-                    gesture_code = 2
-                    self.last_slide_time = now
-
-            # Visual debug rendering
-            mp.solutions.drawing_utils.draw_landmarks(
-                frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
-            )
-        else:
-            # Neutral fallback when hand is out of view for > 1 sec (FR-HT-03)
-            if self.smoothed_x is None:
-                self.smoothed_x = 0.5
-
-        # Clamp normalized position to [0.0, 1.0]
-        final_x = float(np.clip(self.smoothed_x, 0.0, 1.0))
-        return gesture_code, final_x, frame
-
-    def release(self):
-        """Releases hardware resources (FR-CAP-04)."""
-        if self.cap.isOpened():
-            self.cap.release()
+        return gesture_code, normalized_x, frame
