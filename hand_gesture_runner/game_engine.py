@@ -53,13 +53,21 @@ class Player:
         if self.state == "JUMPING":
             self.vel_y += GRAVITY
             self.y += self.vel_y
+
             if self.y >= PLAYER_Y_GROUND:
                 self.y = PLAYER_Y_GROUND
                 self.vel_y = 0
                 self.grounded = True
                 self.state = "RUNNING"
 
-        # Keep within vertical bounds (shouldn't go below ground)
+        # Extra safety: if for any reason the player is below ground, bring them up
+        if self.y > PLAYER_Y_GROUND:
+            self.y = PLAYER_Y_GROUND
+            if self.state == "JUMPING":
+                self.vel_y = 0
+                self.grounded = True
+                self.state = "RUNNING"
+
         if self.y > PLAYER_Y_GROUND:
             self.y = PLAYER_Y_GROUND
 
@@ -82,7 +90,7 @@ class Obstacle:
 class GameEngine:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
         pygame.display.set_caption("Hand Gesture Runner")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 36)
@@ -94,15 +102,12 @@ class GameEngine:
         self.high_score = self._load_high_score()
         self.game_over = False
         self.frame_count = 0
-
-        # For spawning control
         self.last_spawn_x = SCREEN_WIDTH + 100
 
         # Colours
-        self.BG_COLOR = (135, 206, 235)    # Sky blue
-        self.GROUND_COLOR = (34, 139, 34)  # Forest green
-        self.PLAYER_COLOR = (255, 0, 0)    # Red
-        self.OBSTACLE_COLOR = (139, 69, 19) # Saddle brown
+        self.BG_COLOR = (135, 206, 235)
+        self.GROUND_COLOR = (34, 139, 34)
+        self.OBSTACLE_COLOR = (139, 69, 19)
         self.TEXT_COLOR = (255, 255, 255)
 
     def _load_high_score(self):
@@ -126,44 +131,140 @@ class GameEngine:
         self.frame_count = 0
         self.last_spawn_x = SCREEN_WIDTH + 100
 
+    def draw_player(self):
+        """Draw the player as a cute 'small man toy' with arms and hands."""
+        x, y = self.player.x, self.player.y
+        w, h = self.player.width, self.player.height
+
+        # Colors
+        body_color = (0, 150, 255)
+        skin_color = (255, 200, 150)
+        pants_color = (50, 50, 200)
+        shoe_color = (200, 50, 50)
+        eye_color = (0, 0, 0)
+        mouth_color = (50, 50, 50)
+
+        # --- Head ---
+        head_radius = int(w * 0.4)
+        head_x = x + w // 2
+        head_y = y + int(h * 0.25)
+        pygame.draw.circle(self.screen, skin_color, (head_x, head_y), head_radius)
+
+        # --- Body ---
+        body_rect = pygame.Rect(
+            x + int(w * 0.15),
+            y + int(h * 0.4),
+            int(w * 0.7),
+            int(h * 0.35)
+        )
+        pygame.draw.rect(self.screen, body_color, body_rect)
+
+        # --- Arms ---
+        arm_width = int(w * 0.1)
+        arm_height = int(h * 0.3)
+        left_arm_rect = pygame.Rect(
+            x + int(w * 0.05),
+            y + int(h * 0.4),
+            arm_width,
+            arm_height
+        )
+        pygame.draw.rect(self.screen, skin_color, left_arm_rect)
+        right_arm_rect = pygame.Rect(
+            x + int(w * 0.85),
+            y + int(h * 0.4),
+            arm_width,
+            arm_height
+        )
+        pygame.draw.rect(self.screen, skin_color, right_arm_rect)
+
+        # --- Hands ---
+        hand_radius = int(w * 0.08)
+        pygame.draw.circle(
+            self.screen,
+            skin_color,
+            (x + int(w * 0.1), y + int(h * 0.65)),
+            hand_radius
+        )
+        pygame.draw.circle(
+            self.screen,
+            skin_color,
+            (x + int(w * 0.9), y + int(h * 0.65)),
+            hand_radius
+        )
+
+        # --- Legs ---
+        leg_width = int(w * 0.2)
+        leg_height = int(h * 0.25)
+        pygame.draw.rect(
+            self.screen,
+            pants_color,
+            (x + int(w * 0.2), y + int(h * 0.75), leg_width, leg_height)
+        )
+        pygame.draw.rect(
+            self.screen,
+            pants_color,
+            (x + int(w * 0.6), y + int(h * 0.75), leg_width, leg_height)
+        )
+
+        # --- Shoes ---
+        shoe_width = int(w * 0.3)
+        shoe_height = int(h * 0.1)
+        pygame.draw.rect(
+            self.screen,
+            shoe_color,
+            (x + int(w * 0.15), y + int(h * 0.95), shoe_width, shoe_height)
+        )
+        pygame.draw.rect(
+            self.screen,
+            shoe_color,
+            (x + int(w * 0.55), y + int(h * 0.95), shoe_width, shoe_height)
+        )
+
+        # --- Eyes ---
+        eye_y_offset = int(head_radius * 0.1)
+        eye_size = int(head_radius * 0.15)
+        pygame.draw.circle(
+            self.screen,
+            eye_color,
+            (head_x - int(head_radius * 0.3), head_y - eye_y_offset),
+            eye_size
+        )
+        pygame.draw.circle(
+            self.screen,
+            eye_color,
+            (head_x + int(head_radius * 0.3), head_y - eye_y_offset),
+            eye_size
+        )
+
+        # --- Mouth ---
+        mouth_y = head_y + int(head_radius * 0.3)
+        start_pos = (head_x - int(head_radius * 0.2), mouth_y)
+        end_pos = (head_x + int(head_radius * 0.2), mouth_y)
+        pygame.draw.line(self.screen, mouth_color, start_pos, end_pos, 2)
+
     def update(self, gesture_code, norm_x, dt_ms):
-        """
-        Update game state based on gesture input.
-        gesture_code: 0=idle, 1=jump, 2=slide
-        norm_x: 0..1 (left to right)
-        dt_ms: time since last frame in milliseconds
-        """
         if self.game_over:
             return
 
-        # --- Player Steering ---
-        # Map norm_x to screen position with boundary padding
         padding = 20
         self.player.x = padding + (norm_x * (SCREEN_WIDTH - 2 * padding - self.player.width))
-        # Clamp to screen
         self.player.x = max(0, min(self.player.x, SCREEN_WIDTH - self.player.width))
 
-        # --- Gesture Actions ---
-        if gesture_code == 1:   # Jump
+        if gesture_code == 1:
             self.player.jump()
-        elif gesture_code == 2: # Slide
+        elif gesture_code == 2:
             self.player.slide()
 
-        # --- Update player physics ---
         self.player.update(dt_ms)
 
-        # --- Spawn Obstacles ---
         self.frame_count += 1
         if self.frame_count % OBSTACLE_SPAWN_INTERVAL == 0:
-            # Random Y position (ground level)
             y_pos = PLAYER_Y_GROUND + (PLAYER_HEIGHT - OBSTACLE_HEIGHT)
-            # Ensure minimum gap from last obstacle
             if (not self.obstacles) or (SCREEN_WIDTH - self.obstacles[-1].rect.x > OBSTACLE_MIN_GAP):
                 speed = OBSTACLE_SPEED_BASE + (self.score // 200) * 0.5
                 obs = Obstacle(SCREEN_WIDTH, y_pos, OBSTACLE_WIDTH, OBSTACLE_HEIGHT, speed)
                 self.obstacles.append(obs)
 
-        # --- Update obstacles ---
         for obs in self.obstacles[:]:
             obs.update()
             if obs.off_screen():
@@ -173,7 +274,6 @@ class GameEngine:
                     self.high_score = self.score
                     self._save_high_score()
 
-        # --- Collision Detection (AABB) ---
         player_rect = self.player.get_rect()
         for obs in self.obstacles:
             if player_rect.colliderect(obs.rect):
@@ -181,37 +281,28 @@ class GameEngine:
                 break
 
     def render(self):
-        """Draw everything to the screen."""
         self.screen.fill(self.BG_COLOR)
-
-        # Draw ground
         ground_y = PLAYER_Y_GROUND + PLAYER_HEIGHT
         pygame.draw.rect(self.screen, self.GROUND_COLOR,
                          (0, ground_y, SCREEN_WIDTH, SCREEN_HEIGHT - ground_y))
 
-        # Draw player
-        player_rect = self.player.get_rect()
-        pygame.draw.rect(self.screen, self.PLAYER_COLOR, player_rect)
+        self.draw_player()
 
-        # Draw obstacles
         for obs in self.obstacles:
             pygame.draw.rect(self.screen, self.OBSTACLE_COLOR, obs.rect)
 
-        # Draw HUD
         score_text = self.font.render(f"Score: {self.score}", True, self.TEXT_COLOR)
         self.screen.blit(score_text, (10, 10))
 
         high_text = self.font.render(f"High: {self.high_score}", True, self.TEXT_COLOR)
         self.screen.blit(high_text, (10, 50))
 
-        state_text = self.small_font.render(f"State: {self.player.state}", True, (0,0,0))
+        state_text = self.small_font.render(f"State: {self.player.state}", True, (0, 0, 0))
         self.screen.blit(state_text, (10, 90))
 
-        # Gesture hint
-        hint = self.small_font.render("Open palm = Jump | Fist = Slide", True, (0,0,0))
+        hint = self.small_font.render("Open palm = Jump | Fist = Slide", True, (0, 0, 0))
         self.screen.blit(hint, (SCREEN_WIDTH - 250, 10))
 
-        # Game Over overlay
         if self.game_over:
             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
@@ -226,10 +317,11 @@ class GameEngine:
         pygame.display.flip()
 
     def handle_events(self):
-        """Process Pygame events (keyboard for testing & restart)."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            if event.type == pygame.VIDEORESIZE:
+                pass
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     return False
