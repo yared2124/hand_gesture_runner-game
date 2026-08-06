@@ -1,34 +1,44 @@
-# System & Screen Display Settings
+"""
+Configuration constants for the hand-gesture runner game.
+Adjust these to tune gameplay feel and gesture sensitivity.
+"""
+
+# ─── Display ────────────────────────────────────────────────
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
+FPS_TARGET = 60
+
+# ─── Camera ──────────────────────────────────────────────────
 CAMERA_INDEX = 0
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
-FPS_TARGET = 60
+SHOW_DEBUG_WINDOW = True        # Set to False to hide camera feed
 
-# Gesture Thresholds & Feature Parameters (NFR-ACC, FR-GS)
+# ─── Player Physics ─────────────────────────────────────────
+GRAVITY = 0.6
+JUMP_SPEED = -12.0          # Negative = upward
+SLIDE_DURATION = 500        # milliseconds
+PLAYER_WIDTH = 40
+PLAYER_HEIGHT = 60
+PLAYER_Y_GROUND = SCREEN_HEIGHT - PLAYER_HEIGHT - 50
+
+# ─── Obstacles ──────────────────────────────────────────────
+OBSTACLE_WIDTH = 30
+OBSTACLE_HEIGHT = 40
+OBSTACLE_SPEED_BASE = 5.0
+OBSTACLE_SPAWN_INTERVAL = 120       # frames between spawns
+OBSTACLE_MIN_GAP = 150              # pixels between obstacles
+
+# ─── Gesture Recognition ────────────────────────────────────
+GESTURE_DEBOUNCE_MS = 300           # cooldown after jump/slide
+SMOOTHING_ALPHA = 0.3               # steering smoothing (0=no smoothing, 1=instant)
 MIN_DETECTION_CONFIDENCE = 0.7
-MIN_TRACKING_CONFIDENCE = 0.7
-GESTURE_DEBOUNCE_MS = 300      # 300 ms cooldown to prevent jump/slide flickering
-SMOOTHING_ALPHA = 0.3          # Exponential Moving Average factor for steering
+HAND_SCALE_REFERENCE_ID = 9         # Middle finger MCP for scale normalisation
 
-# Physics & Player Mechanics (FR-PM)
-GRAVITY = 1.2
-JUMP_SPEED = -20
-SLIDE_DURATION_MS = 600        # Duration of duck/slide state
-PLAYER_NORMAL_WIDTH = 50
-PLAYER_NORMAL_HEIGHT = 70
-PLAYER_SLIDE_HEIGHT = 35
+# ─── Landmark IDs (MediaPipe) ──────────────────────────────
+WRIST_ID = 0
+FINGERTIP_IDS = [8, 12, 16, 20]     # Index, Middle, Ring, Pinky
+PIP_IDS = [6, 10, 14, 18]           # Corresponding PIP joints
 
-# Obstacle & Scoring Parameters (FR-OB, FR-SC)
-OBSTACLE_BASE_SPEED = 7
-OBSTACLE_SPAWN_INTERVAL_MS = 1400
-SCORE_FILE = "highscore.txt"
-
-# Color Palette (RGB)
-COLOR_BG = (25, 28, 36)
-COLOR_PLAYER = (0, 230, 153)
-COLOR_OBSTACLE_JUMP = (255, 75, 75)   # Red: Jump over
-COLOR_OBSTACLE_SLIDE = (255, 180, 0)  # Amber: Duck under
-COLOR_TEXT = (240, 240, 240)
-COLOR_HUD_ACCENT = (0, 180, 216)
+# ─── File Paths ─────────────────────────────────────────────
+HIGH_SCORE_FILE = "highscore.txt"
