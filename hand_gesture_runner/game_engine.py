@@ -1,206 +1,242 @@
 """
-Game Engine Module (game_engine.py)
-Manages player physics, state transitions, obstacle mechanics, scoring, and UI rendering.
-Fulfills FR-PM, FR-OB, FR-CD, and FR-SC requirements.
+Game Engine: Manages Pygame display, player state, obstacles, collisions, and scoring.
 """
 
 import pygame
 import random
 import os
-import config
+from config import (
+    SCREEN_WIDTH, SCREEN_HEIGHT, FPS_TARGET,
+    GRAVITY, JUMP_SPEED, SLIDE_DURATION,
+    PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_Y_GROUND,
+    OBSTACLE_WIDTH, OBSTACLE_HEIGHT, OBSTACLE_SPEED_BASE,
+    OBSTACLE_SPAWN_INTERVAL, OBSTACLE_MIN_GAP,
+    HIGH_SCORE_FILE
+)
 
 class Player:
     def __init__(self):
-        self.ground_y = config.SCREEN_HEIGHT - 100
-        self.x = config.SCREEN_WIDTH // 2
-        self.y = self.ground_y
-        self.width = config.PLAYER_NORMAL_WIDTH
-        self.height = config.PLAYER_NORMAL_HEIGHT
+        self.width = PLAYER_WIDTH
+        self.height = PLAYER_HEIGHT
+        self.x = SCREEN_WIDTH // 4
+        self.y = PLAYER_Y_GROUND
+        self.vel_y = 0
+        self.grounded = True
+        self.state = "RUNNING"   # RUNNING, JUMPING, SLIDING
+        self.slide_timer = 0
+        self.normal_height = PLAYER_HEIGHT
+        self.slide_height = PLAYER_HEIGHT // 2
 
-        self.state = "RUNNING"  # RUNNING, JUMPING, or SLIDING
-        self.vy = 0.0
-        self.slide_timer = 0.0
-
-    def handle_input(self, gesture_code: int, normalized_x: float):
-        # Apply steering
-        self.x = int(normalized_x * config.SCREEN_WIDTH)
-
-        # Trigger state transitions
-        if gesture_code == 1 and self.state == "RUNNING":
+    def jump(self):
+        if self.grounded:
+            self.vel_y = JUMP_SPEED
+            self.grounded = False
             self.state = "JUMPING"
-            self.vy = config.JUMP_SPEED
 
-        elif gesture_code == 2 and self.state == "RUNNING":
+    def slide(self):
+        if self.grounded:
             self.state = "SLIDING"
-            self.slide_timer = config.SLIDE_DURATION_MS
-            self.height = config.PLAYER_SLIDE_HEIGHT
-            self.y = self.ground_y + (config.PLAYER_NORMAL_HEIGHT - config.PLAYER_SLIDE_HEIGHT)
+            self.slide_timer = SLIDE_DURATION
+            self.height = self.slide_height
+            self.y = PLAYER_Y_GROUND + (self.normal_height - self.slide_height)
 
-    def update(self, dt_ms: float):
-        # Physics update loop
-        if self.state == "JUMPING":
-            self.y += self.vy
-            self.vy += config.GRAVITY
-            if self.y >= self.ground_y:
-                self.y = self.ground_y
-                self.state = "RUNNING"
-                self.vy = 0.0
-
-        elif self.state == "SLIDING":
+    def update(self, dt_ms):
+        # Update slide timer
+        if self.state == "SLIDING":
             self.slide_timer -= dt_ms
             if self.slide_timer <= 0:
                 self.state = "RUNNING"
-                self.height = config.PLAYER_NORMAL_HEIGHT
-                self.y = self.ground_y
+                self.height = self.normal_height
+                self.y = PLAYER_Y_GROUND
 
-    def get_rect(self) -> pygame.Rect:
-        return pygame.Rect(
-            self.x - self.width // 2,
-            int(self.y - self.height),
-            self.width,
-            self.height
-        )
+        # Physics for jumping
+        if self.state == "JUMPING":
+            self.vel_y += GRAVITY
+            self.y += self.vel_y
+            if self.y >= PLAYER_Y_GROUND:
+                self.y = PLAYER_Y_GROUND
+                self.vel_y = 0
+                self.grounded = True
+                self.state = "RUNNING"
+
+        # Keep within vertical bounds (shouldn't go below ground)
+        if self.y > PLAYER_Y_GROUND:
+            self.y = PLAYER_Y_GROUND
+
+    def get_rect(self):
+        return pygame.Rect(self.x, self.y, self.width, self.height)
 
 
 class Obstacle:
-    def __init__(self, obs_type: str, speed: float):
-        self.type = obs_type  # "LOW" (must jump over) or "HIGH" (must slide under)
-        self.width = random.randint(50, 80)
-        self.x = config.SCREEN_WIDTH + self.width
-
-        ground_y = config.SCREEN_HEIGHT - 100
-        if self.type == "LOW":
-            # Placed on the floor
-            self.height = 40
-            self.y = ground_y - self.height
-            self.color = config.COLOR_OBSTACLE_JUMP
-        else:
-            # Suspended overhead
-            self.height = 50
-            self.y = ground_y - config.PLAYER_NORMAL_HEIGHT - 10
-            self.color = config.COLOR_OBSTACLE_SLIDE
-
+    def __init__(self, x, y, width, height, speed):
+        self.rect = pygame.Rect(x, y, width, height)
         self.speed = speed
 
     def update(self):
-        self.x -= self.speed
+        self.rect.x -= self.speed
 
-    def get_rect(self) -> pygame.Rect:
-        return pygame.Rect(int(self.x), int(self.y), self.width, self.height)
+    def off_screen(self):
+        return self.rect.x + self.rect.width < 0
 
 
 class GameEngine:
     def __init__(self):
         pygame.init()
-        pygame.font.init()
-        self.screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
-        pygame.display.set_caption("Hand-Controlled Runner")
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("Hand Gesture Runner")
         self.clock = pygame.time.Clock()
+        self.font = pygame.font.Font(None, 36)
+        self.small_font = pygame.font.Font(None, 24)
 
-        self.font = pygame.font.SysFont("Arial", 24, bold=True)
-        self.title_font = pygame.font.SysFont("Arial", 36, bold=True)
-
-        self.high_score = self.load_high_score()
-        self.reset()
-
-    def reset(self):
         self.player = Player()
         self.obstacles = []
         self.score = 0
+        self.high_score = self._load_high_score()
         self.game_over = False
-        self.spawn_timer = 0.0
-        self.current_speed = config.OBSTACLE_BASE_SPEED
+        self.frame_count = 0
 
-    def load_high_score(self) -> int:
-        if os.path.exists(config.SCORE_FILE):
-            try:
-                with open(config.SCORE_FILE, "r") as f:
+        # For spawning control
+        self.last_spawn_x = SCREEN_WIDTH + 100
+
+        # Colours
+        self.BG_COLOR = (135, 206, 235)    # Sky blue
+        self.GROUND_COLOR = (34, 139, 34)  # Forest green
+        self.PLAYER_COLOR = (255, 0, 0)    # Red
+        self.OBSTACLE_COLOR = (139, 69, 19) # Saddle brown
+        self.TEXT_COLOR = (255, 255, 255)
+
+    def _load_high_score(self):
+        if os.path.exists(HIGH_SCORE_FILE):
+            with open(HIGH_SCORE_FILE, "r") as f:
+                try:
                     return int(f.read().strip())
-            except ValueError:
-                return 0
+                except:
+                    return 0
         return 0
 
-    def save_high_score(self):
-        if self.score > self.high_score:
-            self.high_score = self.score
-            with open(config.SCORE_FILE, "w") as f:
-                f.write(str(self.high_score))
+    def _save_high_score(self):
+        with open(HIGH_SCORE_FILE, "w") as f:
+            f.write(str(self.high_score))
 
-    def update(self, gesture_code: int, normalized_x: float, dt_ms: float):
+    def reset(self):
+        self.player = Player()
+        self.obstacles.clear()
+        self.score = 0
+        self.game_over = False
+        self.frame_count = 0
+        self.last_spawn_x = SCREEN_WIDTH + 100
+
+    def update(self, gesture_code, norm_x, dt_ms):
+        """
+        Update game state based on gesture input.
+        gesture_code: 0=idle, 1=jump, 2=slide
+        norm_x: 0..1 (left to right)
+        dt_ms: time since last frame in milliseconds
+        """
         if self.game_over:
             return
 
-        # Increment Score & Dynamic Difficulty Scaling
-        self.score += 1
-        self.current_speed = config.OBSTACLE_BASE_SPEED + (self.score // 300)
+        # --- Player Steering ---
+        # Map norm_x to screen position with boundary padding
+        padding = 20
+        self.player.x = padding + (norm_x * (SCREEN_WIDTH - 2 * padding - self.player.width))
+        # Clamp to screen
+        self.player.x = max(0, min(self.player.x, SCREEN_WIDTH - self.player.width))
 
-        # Update Player physics
-        self.player.handle_input(gesture_code, normalized_x)
+        # --- Gesture Actions ---
+        if gesture_code == 1:   # Jump
+            self.player.jump()
+        elif gesture_code == 2: # Slide
+            self.player.slide()
+
+        # --- Update player physics ---
         self.player.update(dt_ms)
 
-        # Spawn Obstacles
-        self.spawn_timer += dt_ms
-        if self.spawn_timer >= config.OBSTACLE_SPAWN_INTERVAL_MS:
-            obs_type = random.choice(["LOW", "HIGH"])
-            self.obstacles.append(Obstacle(obs_type, self.current_speed))
-            self.spawn_timer = 0.0
+        # --- Spawn Obstacles ---
+        self.frame_count += 1
+        if self.frame_count % OBSTACLE_SPAWN_INTERVAL == 0:
+            # Random Y position (ground level)
+            y_pos = PLAYER_Y_GROUND + (PLAYER_HEIGHT - OBSTACLE_HEIGHT)
+            # Ensure minimum gap from last obstacle
+            if (not self.obstacles) or (SCREEN_WIDTH - self.obstacles[-1].rect.x > OBSTACLE_MIN_GAP):
+                speed = OBSTACLE_SPEED_BASE + (self.score // 200) * 0.5
+                obs = Obstacle(SCREEN_WIDTH, y_pos, OBSTACLE_WIDTH, OBSTACLE_HEIGHT, speed)
+                self.obstacles.append(obs)
 
-        # Update and process obstacles
-        player_rect = self.player.get_rect()
+        # --- Update obstacles ---
         for obs in self.obstacles[:]:
             obs.update()
-
-            # FR-CD-01: AABB Collision Check
-            if player_rect.colliderect(obs.get_rect()):
-                self.game_over = True
-                self.save_high_score()
-
-            # Remove off-screen obstacles
-            if obs.x + obs.width < 0:
+            if obs.off_screen():
                 self.obstacles.remove(obs)
+                self.score += 1
+                if self.score > self.high_score:
+                    self.high_score = self.score
+                    self._save_high_score()
 
-    def render(self, debug_frame=None):
-        self.screen.fill(config.COLOR_BG)
-
-        # Draw Floor Line
-        ground_y = config.SCREEN_HEIGHT - 100
-        pygame.draw.line(self.screen, (80, 90, 110), (0, ground_y), (config.SCREEN_WIDTH, ground_y), 4)
-
-        # Draw Player
-        pygame.draw.rect(self.screen, config.COLOR_PLAYER, self.player.get_rect(), border_radius=6)
-
-        # Draw Obstacles
+        # --- Collision Detection (AABB) ---
+        player_rect = self.player.get_rect()
         for obs in self.obstacles:
-            pygame.draw.rect(self.screen, obs.color, obs.get_rect(), border_radius=4)
+            if player_rect.colliderect(obs.rect):
+                self.game_over = True
+                break
 
-        # Draw On-Screen HUD (FR-SC-01)
-        score_surf = self.font.render(f"Score: {self.score}  |  High Score: {self.high_score}", True, config.COLOR_TEXT)
-        self.screen.blit(score_surf, (20, 20))
+    def render(self):
+        """Draw everything to the screen."""
+        self.screen.fill(self.BG_COLOR)
 
-        state_surf = self.font.render(f"State: {self.player.state}", True, config.COLOR_HUD_ACCENT)
-        self.screen.blit(state_surf, (20, 50))
+        # Draw ground
+        ground_y = PLAYER_Y_GROUND + PLAYER_HEIGHT
+        pygame.draw.rect(self.screen, self.GROUND_COLOR,
+                         (0, ground_y, SCREEN_WIDTH, SCREEN_HEIGHT - ground_y))
 
-        # Overlay OpenCV Webcam feed in top-right corner (Optional visual feedback)
-        if debug_frame is not None:
-            # Resize webcam image for debug view window
-            debug_resized = cv2.resize(debug_frame, (160, 120))
-            # Convert OpenCV BGR format to Pygame RGB
-            debug_rgb = cv2.cvtColor(debug_resized, cv2.COLOR_BGR2RGB)
-            surf = pygame.surfarray.make_surface(debug_rgb.swapaxes(0, 1))
-            self.screen.blit(surf, (config.SCREEN_WIDTH - 180, 20))
-            pygame.draw.rect(self.screen, config.COLOR_HUD_ACCENT, (config.SCREEN_WIDTH - 180, 20, 160, 120), 2)
+        # Draw player
+        player_rect = self.player.get_rect()
+        pygame.draw.rect(self.screen, self.PLAYER_COLOR, player_rect)
 
-        # Draw Game Over Screen
+        # Draw obstacles
+        for obs in self.obstacles:
+            pygame.draw.rect(self.screen, self.OBSTACLE_COLOR, obs.rect)
+
+        # Draw HUD
+        score_text = self.font.render(f"Score: {self.score}", True, self.TEXT_COLOR)
+        self.screen.blit(score_text, (10, 10))
+
+        high_text = self.font.render(f"High: {self.high_score}", True, self.TEXT_COLOR)
+        self.screen.blit(high_text, (10, 50))
+
+        state_text = self.small_font.render(f"State: {self.player.state}", True, (0,0,0))
+        self.screen.blit(state_text, (10, 90))
+
+        # Gesture hint
+        hint = self.small_font.render("Open palm = Jump | Fist = Slide", True, (0,0,0))
+        self.screen.blit(hint, (SCREEN_WIDTH - 250, 10))
+
+        # Game Over overlay
         if self.game_over:
-            overlay = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
-            overlay.set_alpha(180)
-            overlay.fill((0, 0, 0))
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
             self.screen.blit(overlay, (0, 0))
-
-            go_surf = self.title_font.render("GAME OVER", True, (255, 60, 60))
-            restart_surf = self.font.render("Press SPACE to Restart", True, config.COLOR_TEXT)
-
-            self.screen.blit(go_surf, (config.SCREEN_WIDTH // 2 - go_surf.get_width() // 2, 220))
-            self.screen.blit(restart_surf, (config.SCREEN_WIDTH // 2 - restart_surf.get_width() // 2, 280))
+            go_text = self.font.render("GAME OVER", True, (255, 255, 255))
+            go_rect = go_text.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 40))
+            self.screen.blit(go_text, go_rect)
+            restart_text = self.small_font.render("Press R to restart or ESC to quit", True, (255, 255, 255))
+            restart_rect = restart_text.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2 + 20))
+            self.screen.blit(restart_text, restart_rect)
 
         pygame.display.flip()
+
+    def handle_events(self):
+        """Process Pygame events (keyboard for testing & restart)."""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return False
+                if event.key == pygame.K_r and self.game_over:
+                    self.reset()
+                    return True
+        return True
+
+    def quit(self):
+        pygame.quit()
