@@ -1,46 +1,57 @@
+"""
+Main Controller: Glues the vision module and game engine together.
+Includes optional debug window showing camera feed with landmarks.
+"""
+
 import sys
-import pygame
-import config
+import cv2
+from config import FPS_TARGET, SHOW_DEBUG_WINDOW
 from hand_tracker import HandTracker
 from game_engine import GameEngine
 
 def main():
-    # Initialize Hand Tracker & Game Engine
+    print("Initialising Hand Gesture Runner...")
+    print("Press ESC to quit, R to restart after game over.")
+
     try:
         tracker = HandTracker()
-    except Exception as e:
-        print(f"Error initializing vision pipeline: {e}")
+    except RuntimeError as e:
+        print(f"ERROR: {e}")
         sys.exit(1)
 
-    engine = GameEngine()
+    game = GameEngine()
+
+    # Main loop
     running = True
-
     while running:
-        # Tick at fixed target FPS and compute delta time
-        dt_ms = engine.clock.tick(config.FPS_TARGET)
+        # --- Fetch latest gesture from camera (including debug frame) ---
+        gesture_code, norm_x, detected, debug_frame = tracker.get_gesture_and_position()
 
-        # Handle system exit and restart events
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+        # --- Optional: show debug window with landmarks ---
+        if SHOW_DEBUG_WINDOW and debug_frame is not None:
+            cv2.imshow("Hand Tracker Debug", debug_frame)
+            # Press 'q' in debug window to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
                 running = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
-                elif event.key == pygame.K_SPACE and engine.game_over:
-                    engine.reset()
+                break
 
-        # Step 1: Query Hand Tracker for gestures and coordinates
-        gesture_code, normalized_x, debug_frame = tracker.process_frame()
+        # --- Update game with current gesture ---
+        dt_ms = game.clock.get_time()  # time since last tick in ms
+        game.update(gesture_code, norm_x, dt_ms)
 
-        # Step 2: Step the game physics engine forward
-        engine.update(gesture_code, normalized_x, dt_ms)
+        # --- Render game ---
+        game.render()
 
-        # Step 3: Render frame
-        engine.render(debug_frame=debug_frame)
+        # --- Event handling (quit, restart) ---
+        running = game.handle_events() and running
 
-    # Cleanup hardware and software contexts on exit
+        # --- Cap frame rate ---
+        game.clock.tick(FPS_TARGET)
+
+    # Cleanup
     tracker.release()
-    pygame.quit()
+    game.quit()
+    cv2.destroyAllWindows()
     sys.exit(0)
 
 if __name__ == "__main__":
