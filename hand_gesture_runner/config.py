@@ -10,8 +10,8 @@ FPS_TARGET = 60
 
 # ─── Camera ──────────────────────────────────────────────────
 CAMERA_INDEX = 0
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
+CAMERA_WIDTH = 420
+CAMERA_HEIGHT = 360
 SHOW_DEBUG_WINDOW = True        # Set to False to hide camera feed
 
 # ─── Player Physics ─────────────────────────────────────────
